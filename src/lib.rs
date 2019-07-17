@@ -4,10 +4,10 @@ extern crate byteorder;
 #[macro_use]
 extern crate failure;
 
+use bitreader::BitReader;
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::fs::File;
 use std::io::{self, Write};
-use byteorder::{ReadBytesExt, WriteBytesExt, LittleEndian};
-use bitreader::BitReader;
 
 pub struct NWAHeader {
     pub channels: i16,
@@ -61,7 +61,7 @@ impl NWAHeader {
             }
         }
 
-        Ok(NWAHeader{
+        Ok(NWAHeader {
             channels,
             bps,
             freq,
@@ -82,17 +82,28 @@ impl NWAHeader {
             bail!("no offsets set even thought they are needed");
         }
         if self.channels != 1 && self.channels != 2 {
-            bail!("this library only supports mono / stereo data: data has {} channels\n", self.channels);
+            bail!(
+                "this library only supports mono / stereo data: data has {} channels\n",
+                self.channels
+            );
         }
         if self.bps != 8 && self.bps != 16 {
-            bail!("this library only supports 8 / 16bit data: data is {} bits\n", self.bps);
+            bail!(
+                "this library only supports 8 / 16bit data: data is {} bits\n",
+                self.bps
+            );
         }
         if self.complevel == -1 {
             let byps = self.bps as i32 / 8; // Bytes per sample
             if self.datasize != self.samplecount * byps {
-                bail!("invalid datasize: datasize {} != samplecount {} * samplesize {}\n", self.datasize, self.samplecount, byps);
+                bail!(
+                    "invalid datasize: datasize {} != samplecount {} * samplesize {}\n",
+                    self.datasize,
+                    self.samplecount,
+                    byps
+                );
             }
-            if self.samplecount != (self.blocks-1)*self.blocksize+self.restsize {
+            if self.samplecount != (self.blocks - 1) * self.blocksize + self.restsize {
                 bail!("total sample count is invalid: samplecount {} != {}*{}+{}(block*blocksize+lastblocksize)\n", self.samplecount, self.blocks-1, self.blocksize, self.restsize);
             }
             return Ok(());
@@ -104,10 +115,15 @@ impl NWAHeader {
             bail!("the last offset overruns the file.\n");
         }
         let byps = self.bps as i32 / 8; // Bytes per sample
-        if self.datasize != self.samplecount*byps {
-            bail!("invalid datasize: datasize {} != samplecount {} * samplesize {}\n", self.datasize, self.samplecount, byps);
+        if self.datasize != self.samplecount * byps {
+            bail!(
+                "invalid datasize: datasize {} != samplecount {} * samplesize {}\n",
+                self.datasize,
+                self.samplecount,
+                byps
+            );
         }
-        if self.samplecount != (self.blocks-1)*self.blocksize+self.restsize {
+        if self.samplecount != (self.blocks - 1) * self.blocksize + self.restsize {
             bail!("total sample count is invalid: samplecount {} != {}*{}+{}(block*blocksize+lastblocksize).\n", self.samplecount, self.blocks-1, self.blocksize, self.restsize);
         }
         Ok(())
@@ -129,7 +145,11 @@ impl NWAFile {
         // WAVE header = 36 bytes
         let size = 36 + header.datasize as usize;
         let data = Vec::with_capacity(size);
-        let mut nwa = NWAFile{header, cur_block: 0, data};
+        let mut nwa = NWAFile {
+            header,
+            cur_block: 0,
+            data,
+        };
 
         // Write the WAVE header
         nwa.write_wave_header()?;
@@ -148,11 +168,12 @@ impl NWAFile {
         Ok(())
     }
 
+    #[rustfmt::skip]
     fn write_wave_header(&mut self) -> Result<(), failure::Error> {
         let byps = (self.header.bps as i16 + 7) >> 3;
 
         self.data.write_all(&['R' as u8, 'I' as u8, 'F' as u8, 'F' as u8])?;
-        self.data.write_i32::<LittleEndian>((self.header.datasize+0x24) as i32)?;
+        self.data.write_i32::<LittleEndian>((self.header.datasize + 0x24) as i32)?;
         self.data.write_all(&['W' as u8, 'A' as u8, 'V' as u8, 'E' as u8])?;
         self.data.write_all(&['f' as u8, 'm' as u8, 't' as u8, ' ' as u8])?;
         self.data.write_all(&[16, 0, 0, 0, 1, 0])?;
@@ -170,7 +191,6 @@ impl NWAFile {
     // decode_block decodes one block with each call. Returns the length of the
     // written bytes and an error if there was one.
     fn decode_block(&mut self, input: &mut io::Read) -> Result<u64, failure::Error> {
-        
         // Uncompressed wave data stream
         if self.header.complevel == -1 {
             self.cur_block = self.header.blocks;
@@ -185,10 +205,11 @@ impl NWAFile {
         // Calculate the size of the decoded block
         let cur_blocksize: i32;
         let curcompsize: i32;
-        if self.cur_block != self.header.blocks-1 {
+        if self.cur_block != self.header.blocks - 1 {
             cur_blocksize = self.header.blocksize * (self.header.bps as i32 / 8);
-            curcompsize = self.header.offsets[self.cur_block as usize +1] - self.header.offsets[self.cur_block as usize ];
-            if cur_blocksize >= self.header.blocksize*(self.header.bps as i32 / 8) * 2 {
+            curcompsize = self.header.offsets[self.cur_block as usize + 1]
+                - self.header.offsets[self.cur_block as usize];
+            if cur_blocksize >= self.header.blocksize * (self.header.bps as i32 / 8) * 2 {
                 bail!("Current block exceeds the excepted count.");
             }
         } else {
@@ -197,7 +218,7 @@ impl NWAFile {
         }
 
         // Read in the block data
-        let mut buf = vec![0;curcompsize as usize];
+        let mut buf = vec![0; curcompsize as usize];
         input.read_exact(&mut buf)?;
 
         // Decode the compressed block
@@ -208,21 +229,23 @@ impl NWAFile {
     }
 
     fn decode(&mut self, buf: &mut io::Read, outsize: usize) -> Result<(), failure::Error> {
-      	let mut d: [i32; 2] = [0, 0];
+        let mut d: [i32; 2] = [0, 0];
         let mut flipflag: usize = 0;
         let mut runlength: i32 = 0;
 
         // Read the first data (with full accuracy)
         if self.header.bps == 8 {
             d[0] = buf.read_u8()? as i32;
-        } else { // bps == 16bit
+        } else {
+            // bps == 16bit
             d[0] = buf.read_u16::<LittleEndian>()? as i32;
         }
         // Stereo
         if self.header.channels == 2 {
             if self.header.bps == 8 {
                 d[1] = buf.read_u8()? as i32;
-            } else { // bps == 16bit
+            } else {
+                // bps == 16bit
                 d[1] = buf.read_u16::<LittleEndian>()? as i32;
             }
         }
@@ -254,13 +277,13 @@ impl NWAFile {
                             let mask1 = (1 << (bits - 1)) as u32;
                             let mask2 = ((1 << (bits - 1)) - 1) as u32;
                             let b = reader.read_bits(bits)?;
-                            if b&mask1 != 0 {
+                            if b & mask1 != 0 {
                                 d[flipflag] -= ((b & mask2) << shift) as i32;
                             } else {
                                 d[flipflag] += ((b & mask2) << shift) as i32;
                             }
                         }
-                    },
+                    }
                     1...6 => {
                         // 1-6 : normal differencial
                         let bits: u32;
@@ -275,12 +298,12 @@ impl NWAFile {
                         let mask1 = (1 << (bits - 1)) as u32;
                         let mask2 = ((1 << (bits - 1)) - 1) as u32;
                         let b = reader.read_bits(bits)?;
-                        if b&mask1 != 0 {
+                        if b & mask1 != 0 {
                             d[flipflag] -= ((b & mask2) << shift) as i32;
                         } else {
                             d[flipflag] += ((b & mask2) << shift) as i32;
                         }
-                    },
+                    }
                     0 => {
                         // Skips when not using RLE
                         if self.header.userunlength == 1 {
@@ -292,8 +315,8 @@ impl NWAFile {
                                 }
                             }
                         }
-                    },
-                    _ => { 
+                    }
+                    _ => {
                         bail!("unreachable code reched");
                     }
                 }
