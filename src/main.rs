@@ -117,7 +117,7 @@ fn read_index(path: &Path, head_block_size: usize) -> Result<Vec<IndexEntry>, fa
     }
     let mut index: Vec<IndexEntry> = Vec::with_capacity(indexcount as usize);
 
-    for i in 0..indexcount {
+    for _i in 0..indexcount {
         let mut buf = vec![0; head_block_size];
         file.read_exact(&mut buf)?;
 
