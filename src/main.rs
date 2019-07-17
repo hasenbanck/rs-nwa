@@ -1,20 +1,29 @@
-mod nwa;
-
 extern crate byteorder;
-
 #[macro_use]
 extern crate failure;
 extern crate structopt;
+extern crate rayon;
+extern crate nwa;
 
+use byteorder::{ReadBytesExt, LittleEndian};
 use nwa::NWAFile;
+use rayon::prelude::*;
+use std::io::prelude::*;
+use std::io::{copy, Read, SeekFrom};
 use std::fs::File;
-use std::path::PathBuf;
+use std::path::{PathBuf, Path};
 use structopt::StructOpt;
 
 enum FileType {
     Nwa,
     Nwk,
     Ovk,
+}
+
+struct IndexEntry {
+    size: i32,
+    offset: i32,
+    count: i32,
 }
 
 #[derive(StructOpt, Debug)]
@@ -29,18 +38,105 @@ struct Opt {
 fn main() -> Result<(), failure::Error> {
     let opt = Opt::from_args();
 
-    let input = opt.input.as_path();
+    let mut input = opt.input.as_path();
     let input_file_name = String::from(input.to_str().unwrap());
-    println!("reading file: {}", input_file_name);
+    println!("converting file: {}", input_file_name);
 
     let input_file_type = get_filetype(&input_file_name)?;
-    let output_file_stem = input.file_stem().unwrap().to_str().unwrap();
+    let output_file_stem = String::from(input.file_stem().unwrap().to_str().unwrap());
 
-    let mut file = File::open(input)?;
-    let mut nwa_file = NWAFile::new(&mut file)?;
-    nwa_file.save(String::from("test.wav"))?;
+    match input_file_type {
+        FileType::Nwa => {
+            handle_nwa(&input, output_file_stem)?;
+        },
+        FileType::Nwk => {
+            handle_nwk(&input, output_file_stem)?;
+        },
+        FileType::Ovk => {
+            handle_ovk(&input, output_file_stem)?;
+        }
+    }
 
     Ok(())
+}
+
+fn handle_nwa(path: &Path, file_stem: String) -> Result<(), failure::Error> {
+    let mut file = File::open(path)?;
+    let mut nwa_file = NWAFile::new(&mut file)?;
+    nwa_file.save(format!("{}.{}", file_stem, "wav"))?;
+
+    Ok(())
+}
+
+fn handle_nwk(path: &Path, file_stem: String) -> Result<(), failure::Error> {
+    let index = read_index(path, 12)?;
+
+    index
+        .into_par_iter()
+        .for_each(|i| {
+            decode_and_save_file(path, i, &file_stem).unwrap();
+        });
+
+    Ok(())
+}
+
+fn handle_ovk(path: &Path, file_stem: &String) -> Result<(), failure::Error> {
+    let index = read_index(path, 16)?;
+
+    index
+        .into_par_iter()
+        .for_each(|i| {
+            save_file(path, i, &file_stem).unwrap();
+        });
+
+    Ok(())
+}
+
+fn decode_and_save_file(path: &Path, i: IndexEntry, file_stem: &String) -> Result<(), failure::Error> {
+    let mut file = File::open(path)?;
+    file.seek(SeekFrom::Start(i.offset as u64))?;
+    let mut nwa = NWAFile::new(&mut file)?;
+    nwa.save(format!("{}-{}.{}", file_stem, i.count, "nwk"))?;
+
+    Ok(())
+}
+
+fn save_file(path: &Path, i: IndexEntry, file_stem: &String) -> Result<(), failure::Error>{
+    let mut file = File::open(path)?;
+    file.seek(SeekFrom::Start(i.offset as u64))?;
+    let mut buf = vec![0; i.size as usize];
+    file.read_exact(&mut buf)?;
+
+    let mut out_file = File::create(format!("{}-{}.{}", file_stem, i.count, "nwk"))?;
+    copy(&mut buf.as_slice(), &mut out_file)?;
+
+    Ok(())
+}
+
+fn read_index(path: &Path, head_block_size: usize) -> Result<Vec<IndexEntry>, failure::Error> {
+    let mut file = File::open(path)?;
+    let indexcount = file.read_i32::<LittleEndian>()?;
+    if indexcount <= 0 {
+        bail!("invalid indexcount found: {}", indexcount);
+    }
+    let mut index: Vec<IndexEntry> = Vec::with_capacity(indexcount as usize);
+
+    for i in 0..indexcount {
+        let mut buf = vec![0; head_block_size];
+        file.read_exact(&mut buf)?;
+
+        let entry = IndexEntry{
+            size: buf.as_slice().read_i32::<LittleEndian>()?,
+            offset: buf.as_slice().read_i32::<LittleEndian>()?,
+            count: buf.as_slice().read_i32::<LittleEndian>()?,
+        };
+        if entry.offset <= 0 || entry.size <= 0 {
+            bail!("invalid table entry. offset: {}, size: {}", entry.offset, entry.size);
+        }
+
+        index.push(entry)
+    }
+    Ok(index)
 }
 
 fn get_filetype(filename: &String) -> Result<FileType, failure::Error> {

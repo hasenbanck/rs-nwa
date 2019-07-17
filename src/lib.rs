@@ -1,8 +1,11 @@
-use std::fs::File;
-use std::io::{self, Write};
-
 mod bitreader;
 
+extern crate byteorder;
+#[macro_use]
+extern crate failure;
+
+use std::fs::File;
+use std::io::{self, Write};
 use byteorder::{ReadBytesExt, WriteBytesExt, LittleEndian};
 use bitreader::BitReader;
 
@@ -132,13 +135,8 @@ impl NWAFile {
         nwa.write_wave_header()?;
 
         let mut done = 0;
-        loop {
+        while done < nwa.header.datasize as u64 {
             done += nwa.decode_block(input)?;
-            if done == nwa.header.datasize as u64 {
-                break;
-            } else if done > nwa.header.datasize as u64 {
-                bail!("wrote more data than expected")
-            }
         }
 
         Ok(nwa)
@@ -213,7 +211,6 @@ impl NWAFile {
       	let mut d: [i32; 2] = [0, 0];
         let mut flipflag: usize = 0;
         let mut runlength: i32 = 0;
-        let mut reader = BitReader::new()?;
 
         // Read the first data (with full accuracy)
         if self.header.bps == 8 {
@@ -230,17 +227,19 @@ impl NWAFile {
             }
         }
 
+        let mut reader = BitReader::new(buf);
+
         let dsize = outsize / (self.header.bps as usize / 8);
         for _ in 0..dsize {
             // If we are not in a copy loop (RLE), read in the data
             if runlength == 0 {
-                let exponent = reader.read_bits(buf, 3)?;
+                let exponent = reader.read_bits(3)?;
                 // Branching according to the mantissa: 0, 1-6, 7
                 match exponent {
                     7 => {
                         // 7: big exponent
                         // In case we are using RLE (complevel==5) this is disabled
-                        if reader.read_bits(buf, 1)? == 1 {
+                        if reader.read_bits(1)? == 1 {
                             d[flipflag] = 0;
                         } else {
                             let bits: u32;
@@ -254,7 +253,7 @@ impl NWAFile {
                             }
                             let mask1 = (1 << (bits - 1)) as u32;
                             let mask2 = ((1 << (bits - 1)) - 1) as u32;
-                            let b = reader.read_bits(buf, bits)?;
+                            let b = reader.read_bits(bits)?;
                             if b&mask1 != 0 {
                                 d[flipflag] -= ((b & mask2) << shift) as i32;
                             } else {
@@ -262,19 +261,7 @@ impl NWAFile {
                             }
                         }
                     },
-                    0 => {
-                        // Skips when not using RLE
-                        if self.header.userunlength == 1 {
-                            runlength = reader.read_bits(buf, 1)? as i32;
-                            if runlength == 1 {
-                                runlength = reader.read_bits(buf, 2)? as i32;
-                                if runlength == 3 {
-                                    runlength = reader.read_bits(buf, 8)? as i32;
-                                }
-                            }
-                        }
-                    },
-                    _ => {
+                    1...6 => {
                         // 1-6 : normal differencial
                         let bits: u32;
                         let shift: u32;
@@ -287,12 +274,27 @@ impl NWAFile {
                         }
                         let mask1 = (1 << (bits - 1)) as u32;
                         let mask2 = ((1 << (bits - 1)) - 1) as u32;
-                        let b = reader.read_bits(buf, bits)?;
+                        let b = reader.read_bits(bits)?;
                         if b&mask1 != 0 {
                             d[flipflag] -= ((b & mask2) << shift) as i32;
                         } else {
                             d[flipflag] += ((b & mask2) << shift) as i32;
                         }
+                    },
+                    0 => {
+                        // Skips when not using RLE
+                        if self.header.userunlength == 1 {
+                            runlength = reader.read_bits(1)? as i32;
+                            if runlength == 1 {
+                                runlength = reader.read_bits(2)? as i32;
+                                if runlength == 3 {
+                                    runlength = reader.read_bits(8)? as i32;
+                                }
+                            }
+                        }
+                    },
+                    _ => { 
+                        bail!("unreachable code reched");
                     }
                 }
             } else {
@@ -305,7 +307,7 @@ impl NWAFile {
             }
             if self.header.channels == 2 {
                 // Changing the channel
-                flipflag = flipflag ^ 1
+                flipflag ^= 1
             }
         }
         Ok(())
