@@ -9,7 +9,7 @@ name = "nwa"
 path = "src/lib.rs"
 
 [[bin]]
-name = "nwaconv"
+name = "nwatowav"
 path = "src/main.rs"
 
 [dependencies]

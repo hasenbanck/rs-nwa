@@ -219,7 +219,7 @@ impl NWAFile {
 
         // Read in the block data
         let mut buf = vec![0; curcompsize as usize];
-        input.read_exact(&mut buf)?;
+        input.read(&mut buf)?;
 
         // Decode the compressed block
         self.decode(&mut buf.as_slice(), cur_blocksize as usize)?;

@@ -71,39 +71,38 @@ fn handle_nwk(path: &Path, file_stem: String) -> Result<(), failure::Error> {
     let index = read_index(path, 12)?;
 
     index.into_par_iter().for_each(|i| {
-        decode_and_save_file(path, i, &file_stem).unwrap();
+        save_wav(path, i, &file_stem).unwrap();
     });
 
-    Ok(())
+   Ok(())
 }
 
 fn handle_ovk(path: &Path, file_stem: String) -> Result<(), failure::Error> {
-    let index = read_index(path, 16)?;
+    let index = read_index(path, 16)?; // an ovk head entry also contains an i32 original file size entry, that we don't need
 
     index.into_par_iter().for_each(|i| {
-        save_file(path, i, &file_stem).unwrap();
+        save_ogg(path, i, &file_stem).unwrap();
     });
 
     Ok(())
 }
 
-#[rustfmt::skip]
-fn decode_and_save_file(path: &Path, i: IndexEntry, file_stem: &String) -> Result<(), failure::Error> {
+fn save_wav(path: &Path, i: IndexEntry, file_stem: &String) -> Result<(), failure::Error> {
     let mut file = File::open(path)?;
     file.seek(SeekFrom::Start(i.offset as u64))?;
     let mut nwa = NWAFile::new(&mut file)?;
-    nwa.save(format!("{}-{}.{}", file_stem, i.count, "nwk"))?;
+    nwa.save(format!("{}-{}.{}", file_stem, i.count, "wav"))?;
 
     Ok(())
 }
 
-fn save_file(path: &Path, i: IndexEntry, file_stem: &String) -> Result<(), failure::Error> {
+fn save_ogg(path: &Path, i: IndexEntry, file_stem: &String) -> Result<(), failure::Error> {
     let mut file = File::open(path)?;
     file.seek(SeekFrom::Start(i.offset as u64))?;
     let mut buf = vec![0; i.size as usize];
-    file.read_exact(&mut buf)?;
+    file.read(&mut buf)?;
 
-    let mut out_file = File::create(format!("{}-{}.{}", file_stem, i.count, "nwk"))?;
+    let mut out_file = File::create(format!("{}-{}.{}", file_stem, i.count, "ogg"))?;
     copy(&mut buf.as_slice(), &mut out_file)?;
 
     Ok(())
@@ -119,12 +118,13 @@ fn read_index(path: &Path, head_block_size: usize) -> Result<Vec<IndexEntry>, fa
 
     for _i in 0..indexcount {
         let mut buf = vec![0; head_block_size];
-        file.read_exact(&mut buf)?;
+        file.read(&mut buf)?;
+        let mut buf = buf.as_slice();
 
         let entry = IndexEntry {
-            size: buf.as_slice().read_i32::<LittleEndian>()?,
-            offset: buf.as_slice().read_i32::<LittleEndian>()?,
-            count: buf.as_slice().read_i32::<LittleEndian>()?,
+            size: buf.read_i32::<LittleEndian>()?,
+            offset: buf.read_i32::<LittleEndian>()?,
+            count: buf.read_i32::<LittleEndian>()?,
         };
         if entry.offset <= 0 || entry.size <= 0 {
             bail!(
